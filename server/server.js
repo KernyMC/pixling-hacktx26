@@ -8,6 +8,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const edgeGateway = require('./edge-gateway');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER_DIR = path.resolve(__dirname);
@@ -44,8 +45,8 @@ const envLoaded = loadEnv(path.join(ROOT, '.env'));
 const env = (k, d = '') => (process.env[k] || '').trim() || d;
 const PORT = parseInt(env('PORT', '8080'), 10) || 8080;
 const hasEleven = () => !!env('ELEVENLABS_API_KEY');
-const hasGemini = () => !!env('GEMINI_API_KEY');
-const hasSerp = () => !!env('SERPAPI_API_KEY');
+const hasGemini = () => edgeGateway.enabled() || !!env('GEMINI_API_KEY');
+const hasSerp = () => edgeGateway.enabled() || !!env('SERPAPI_API_KEY');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,7 +105,7 @@ async function readJson(req, limit) {
 // Strip anything key-like from strings before logging.
 function redact(s) {
   let out = String(s);
-  for (const k of ['ELEVENLABS_API_KEY', 'GEMINI_API_KEY', 'SERPAPI_API_KEY', 'MODEL_API_KEY']) {
+  for (const k of ['ELEVENLABS_API_KEY', 'GEMINI_API_KEY', 'SERPAPI_API_KEY', 'MODEL_API_KEY', 'PIXLINGS_GATEWAY_TOKEN']) {
     const v = env(k);
     if (v) out = out.split(v).join('***');
   }
@@ -157,7 +158,7 @@ function serveStatic(req, res, pathname) {
     relToRoot.startsWith('..') || path.isAbsolute(relToRoot) ||
     file === SERVER_DIR || file.startsWith(SERVER_DIR + path.sep) ||
     parts.some((p) => p.startsWith('.')) || // .env, .git, .gitignore, ...
-    parts[0] === 'node_modules' || parts[0] === 'package.json' || parts[0] === 'package-lock.json';
+    parts[0] === 'node_modules' || parts[0] === 'edge-gateway' || parts[0] === 'package.json' || parts[0] === 'package-lock.json';
   if (forbidden) return sendJson(res, 404, { ok: false, error: 'Not found' });
 
   fs.stat(file, (err, st) => {
@@ -352,11 +353,10 @@ async function geminiJSON(parts, temperature = 0.4) {
   const url = vertex
     ? `https://aiplatform.googleapis.com/v1/publishers/google/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`
     : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-  const r = await fetchWithTimeout(
-    url,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json', temperature } }) },
-    30000,
-  );
+  const payload = { contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json', temperature } };
+  const r = edgeGateway.enabled()
+    ? await edgeGateway.call('/v1/generate', payload, fetchWithTimeout, 35000)
+    : await fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 30000);
   if (!r.ok) throw await upstreamError(r, 'Gemini');
   const j = await r.json();
   const txt = (j.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
@@ -543,7 +543,9 @@ async function serpMaps(q, lat, lng) {
   u.searchParams.set('ll', `@${lat},${lng},15z`);
   u.searchParams.set('hl', 'en');
   u.searchParams.set('api_key', env('SERPAPI_API_KEY'));
-  const r = await fetchWithTimeout(u, {}, 15000);
+  const r = edgeGateway.enabled()
+    ? await edgeGateway.call('/v1/places', { q, lat, lng }, fetchWithTimeout, 20000)
+    : await fetchWithTimeout(u, {}, 15000);
   if (!r.ok) throw await upstreamError(r, 'SerpApi');
   const j = await r.json();
   if (j.error) throw new Error('SerpApi: ' + j.error);
