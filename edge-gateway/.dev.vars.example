@@ -1,0 +1,5 @@
+GATEWAY_TOKEN=replace-with-random-32-plus-character-secret
+SERPAPI_API_KEY=replace-me
+GEMINI_API_KEY=replace-me
+# GEMINI_ENDPOINT=studio
+# GEMINI_MODEL=gemini-2.5-flash
