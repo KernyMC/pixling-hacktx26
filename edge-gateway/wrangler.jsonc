@@ -1,0 +1,11 @@
+{
+  "name": "pixlings-edge-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "ratelimits": [
+    { "name": "SERP_LIMIT", "namespace_id": "90101", "simple": { "limit": 30, "period": 60 } },
+    { "name": "GEMINI_LIMIT", "namespace_id": "90102", "simple": { "limit": 20, "period": 60 } }
+  ]
+}
